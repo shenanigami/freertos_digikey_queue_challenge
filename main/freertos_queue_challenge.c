@@ -12,6 +12,7 @@ static const char *TAG = "[QUEUE] ";
 // use only 1 core
 // enable CONFIG_FREERTOS_UNICORE
 
+// uart driver configuration
 #define ECHO_TEST_TXD GPIO_NUM_1
 #define ECHO_TEST_RXD GPIO_NUM_3
 // no flow control
@@ -24,8 +25,12 @@ static const char *TAG = "[QUEUE] ";
 #define DELAY_TASK_STACK_SIZE    2*1024
 #define BLINK_TASK_STACK_SIZE    2*1024
 
+// buffer sizes
 #define BUF_SIZE 256
 #define DELAY_BUF_SIZE 6
+
+// led defines
+#define BLINK_GPIO 13
 
 // Task Handles
 static TaskHandle_t x_delay_task = NULL, x_blink_task = NULL;
@@ -115,8 +120,6 @@ static void delay_task(void *arg)
 
 				// Send notification to blink_task, bringing it out of the Blocked state
 				xTaskNotifyGive(x_blink_task);
-				// Block to wait for x_blink_task to notify this task
-				ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
 			}
 			else
@@ -132,22 +135,34 @@ static void delay_task(void *arg)
 
 }
 
+static void configure_led(void) {
+
+	gpio_reset_pin(BLINK_GPIO);
+	/* Set the GPIO as a push/pull output */
+	gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+
+}
+
 static void blink_task(void *arg) {
 
-	uint32_t delay_num = 0;
+	static uint8_t led_state = 0;
+	uint32_t delay_num = 500;
 	while (1) {
 
-		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-		xQueueReceive(queue1, (void *) &delay_num, 0);
-		ESP_LOGI(TAG, "In %s, delay number is %lu", __func__, delay_num);
-		xTaskNotifyGive(x_delay_task);
-
+		if (ulTaskNotifyTake(pdTRUE, 0) == pdPASS) {
+			xQueueReceive(queue1, (void *) &delay_num, 0);
+			ESP_LOGI(TAG, "In %s, delay number is %lu", __func__, delay_num);
+		}
+		gpio_set_level(BLINK_GPIO, led_state);
+		led_state = !led_state;
+		vTaskDelay(delay_num / portTICK_PERIOD_MS);
 	}
 
 }
 
 void app_main(void)
 {
+
 	/* Configure parameters of an UART driver,
 	 * communication pins and install the driver */
 	uart_config_t uart_config = {
@@ -167,6 +182,10 @@ void app_main(void)
 	ESP_ERROR_CHECK(uart_driver_install(ECHO_UART_PORT_NUM, BUF_SIZE, 0, 0, NULL, intr_alloc_flags));
 	ESP_ERROR_CHECK(uart_param_config(ECHO_UART_PORT_NUM, &uart_config));
 	ESP_ERROR_CHECK(uart_set_pin(ECHO_UART_PORT_NUM, ECHO_TEST_TXD, ECHO_TEST_RXD, ECHO_TEST_RTS, ECHO_TEST_CTS));
+
+
+	configure_led();
+
 
 	// Create queues
 	queue1 = xQueueCreate(queue_len, sizeof(uint32_t));
